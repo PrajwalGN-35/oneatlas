@@ -1,0 +1,431 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LifecycleStatus {
+  DRAFT
+  ACTIVE
+  DEPRECATED
+  RETIRED
+}
+
+enum EvidenceStatus {
+  UNVERIFIED
+  VERIFIED
+  ILLUSTRATIVE
+  ESTIMATED
+  UNAVAILABLE
+  CONFLICTED
+  SUPERSEDED
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  UNAVAILABLE
+  LIMITED
+  UNKNOWN
+}
+
+enum BenchmarkDirection {
+  HIGHER_IS_BETTER
+  LOWER_IS_BETTER
+  TARGET_RANGE
+}
+
+enum CandidateEligibility {
+  ELIGIBLE
+  INELIGIBLE
+  NEEDS_REVIEW
+}
+
+model AILab {
+  id          String          @id @default(uuid()) @db.Uuid
+  slug        String          @unique
+  name        String
+  description String?         @db.Text
+  website     String?
+  status      LifecycleStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  models AIModel[]
+
+  @@index([status])
+  @@index([name])
+}
+
+model AIModel {
+  id          String          @id @default(uuid()) @db.Uuid
+  labId       String          @db.Uuid
+  slug        String          @unique
+  name        String
+  description String?         @db.Text
+  status      LifecycleStatus @default(DRAFT)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  lab      AILab          @relation(fields: [labId], references: [id], onDelete: Restrict)
+  versions ModelVersion[]
+
+  @@index([labId])
+  @@index([status])
+  @@index([name])
+  @@index([labId, status])
+}
+
+model ModelVersion {
+  id                  String          @id @default(uuid()) @db.Uuid
+  modelId             String          @db.Uuid
+  versionLabel        String
+  releaseDate         DateTime?       @db.Date
+  effectiveFrom       DateTime?       @db.Timestamptz(6)
+  effectiveTo         DateTime?       @db.Timestamptz(6)
+  contextWindow       Int?
+  maxOutputTokens     Int?
+  technicalAttributes Json?           @db.JsonB
+  isDeprecated        Boolean         @default(false)
+  status              LifecycleStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  model            AIModel           @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  offerings        ModelProvider[]
+  capabilities     ModelCapability[]
+  modalities       ModelModality[]
+  benchmarkResults BenchmarkResult[]
+
+  @@unique([modelId, versionLabel])
+  @@index([modelId])
+  @@index([versionLabel])
+  @@index([status])
+  @@index([contextWindow])
+  @@index([releaseDate])
+}
+
+model Provider {
+  id          String          @id @default(uuid()) @db.Uuid
+  slug        String          @unique
+  name        String
+  website     String?
+  description String?         @db.Text
+  regionCodes String[]        @default([])
+  status      LifecycleStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  offerings ModelProvider[]
+
+  @@index([name])
+  @@index([status])
+}
+
+model ModelProvider {
+  id                 String    @id @default(uuid()) @db.Uuid
+  modelVersionId     String    @db.Uuid
+  providerId         String    @db.Uuid
+  providerModelId    String?
+  endpointModalities String[]  @default([])
+  regionCodes        String[]  @default([])
+  effectiveFrom      DateTime? @db.Timestamptz(6)
+  effectiveTo        DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  modelVersion             ModelVersion                @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  provider                 Provider                    @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  pricing                  Pricing[]
+  availabilityObservations ModelProviderAvailability[]
+  suitabilityResults       SuitabilityResult[]
+
+  @@unique([modelVersionId, providerId])
+  @@index([providerId])
+  @@index([modelVersionId])
+}
+
+model ModelProviderAvailability {
+  id              String             @id @default(uuid()) @db.Uuid
+  modelProviderId String             @db.Uuid
+  dataSourceId    String             @db.Uuid
+  status          AvailabilityStatus
+  observedAt      DateTime           @default(now()) @db.Timestamptz(6)
+  effectiveFrom   DateTime           @default(now()) @db.Timestamptz(6)
+  effectiveTo     DateTime?          @db.Timestamptz(6)
+  notes           String?            @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  modelProvider ModelProvider @relation(fields: [modelProviderId], references: [id], onDelete: Restrict)
+  dataSource    DataSource    @relation("AvailabilitySource", fields: [dataSourceId], references: [id], onDelete: Restrict)
+
+  @@index([modelProviderId, observedAt])
+  @@index([dataSourceId])
+  @@index([status])
+  @@index([effectiveFrom, effectiveTo])
+}
+
+model Pricing {
+  id              String         @id @default(uuid()) @db.Uuid
+  modelProviderId String         @db.Uuid
+  dataSourceId    String         @db.Uuid
+  priceDimension  String
+  billingUnit     String
+  currency        String         @db.VarChar(3)
+  amount          Decimal        @db.Decimal(20, 10)
+  unitQuantity    Decimal        @default(1) @db.Decimal(20, 10)
+  effectiveFrom   DateTime       @db.Timestamptz(6)
+  effectiveTo     DateTime?      @db.Timestamptz(6)
+  observedAt      DateTime       @default(now()) @db.Timestamptz(6)
+  status          EvidenceStatus @default(UNVERIFIED)
+  notes           String?        @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  modelProvider ModelProvider @relation(fields: [modelProviderId], references: [id], onDelete: Restrict)
+  dataSource    DataSource    @relation("PricingSource", fields: [dataSourceId], references: [id], onDelete: Restrict)
+
+  @@index([modelProviderId])
+  @@index([dataSourceId])
+  @@index([effectiveFrom, effectiveTo])
+  @@index([currency])
+  @@index([status])
+  @@index([priceDimension, billingUnit])
+}
+
+model Capability {
+  id          String  @id @default(uuid()) @db.Uuid
+  slug        String  @unique
+  name        String  @unique
+  description String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  modelCapabilities ModelCapability[]
+}
+
+model ModelCapability {
+  id               String         @id @default(uuid()) @db.Uuid
+  modelVersionId   String         @db.Uuid
+  capabilityId     String         @db.Uuid
+  evidenceSourceId String?        @db.Uuid
+  value            String?
+  status           EvidenceStatus @default(UNVERIFIED)
+  notes            String?        @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  modelVersion ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  capability   Capability   @relation(fields: [capabilityId], references: [id], onDelete: Restrict)
+  evidence     DataSource?  @relation("CapabilityEvidence", fields: [evidenceSourceId], references: [id], onDelete: Restrict)
+
+  @@index([modelVersionId, capabilityId])
+  @@index([capabilityId])
+  @@index([evidenceSourceId])
+  @@index([status])
+}
+
+model Modality {
+  id          String  @id @default(uuid()) @db.Uuid
+  slug        String  @unique
+  name        String  @unique
+  description String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  modelModalities ModelModality[]
+}
+
+model ModelModality {
+  id             String @id @default(uuid()) @db.Uuid
+  modelVersionId String @db.Uuid
+  modalityId     String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  modelVersion ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  modality     Modality     @relation(fields: [modalityId], references: [id], onDelete: Restrict)
+
+  @@unique([modelVersionId, modalityId])
+  @@index([modalityId])
+}
+
+model Benchmark {
+  id          String             @id @default(uuid()) @db.Uuid
+  slug        String
+  version     String
+  name        String
+  methodology Json               @db.JsonB
+  metric      String
+  unit        String
+  direction   BenchmarkDirection
+  population  String?
+  sourceId    String             @db.Uuid
+  publishedAt DateTime?          @db.Date
+  description String?            @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  source  DataSource        @relation("BenchmarkDefinitionSource", fields: [sourceId], references: [id], onDelete: Restrict)
+  results BenchmarkResult[]
+
+  @@unique([slug, version])
+  @@index([name])
+  @@index([sourceId])
+  @@index([publishedAt])
+}
+
+model BenchmarkResult {
+  id                   String         @id @default(uuid()) @db.Uuid
+  modelVersionId       String         @db.Uuid
+  benchmarkId          String         @db.Uuid
+  dataSourceId         String         @db.Uuid
+  scoreValue           Decimal        @db.Decimal(24, 10)
+  rawScore             String?
+  evaluatedAt          DateTime       @db.Timestamptz(6)
+  evaluationConditions Json           @db.JsonB
+  status               EvidenceStatus @default(UNVERIFIED)
+  notes                String?        @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  modelVersion ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  benchmark    Benchmark    @relation(fields: [benchmarkId], references: [id], onDelete: Restrict)
+  dataSource   DataSource   @relation("BenchmarkResultSource", fields: [dataSourceId], references: [id], onDelete: Restrict)
+
+  @@index([modelVersionId])
+  @@index([benchmarkId, evaluatedAt])
+  @@index([dataSourceId])
+  @@index([status])
+}
+
+model DataSource {
+  id                 String         @id @default(uuid()) @db.Uuid
+  canonicalUrl       String         @db.Text
+  publisher          String
+  retrievedAt        DateTime       @db.Timestamptz(6)
+  verifiedAt         DateTime?      @db.Timestamptz(6)
+  effectiveDate      DateTime?      @db.Date
+  status             EvidenceStatus @default(UNVERIFIED)
+  checksum           String?
+  citationIdentifier String?
+  notes              String?        @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  pricingRecords       Pricing[]                   @relation("PricingSource")
+  benchmarkDefinitions Benchmark[]                 @relation("BenchmarkDefinitionSource")
+  benchmarkResults     BenchmarkResult[]           @relation("BenchmarkResultSource")
+  capabilityEvidence   ModelCapability[]           @relation("CapabilityEvidence")
+  availabilityRecords  ModelProviderAvailability[] @relation("AvailabilitySource")
+
+  @@index([canonicalUrl])
+  @@index([publisher])
+  @@index([status])
+  @@index([verifiedAt])
+  @@index([retrievedAt])
+}
+
+model WorkloadCategory {
+  id          String  @id @default(uuid()) @db.Uuid
+  slug        String
+  version     String  @default("1.0")
+  name        String
+  description String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  evaluations SuitabilityEvaluation[]
+
+  @@unique([slug, version])
+  @@index([name])
+}
+
+model SuitabilityPolicy {
+  id              String   @id @default(uuid()) @db.Uuid
+  version         String   @unique
+  weights         Json     @db.JsonB
+  hardConstraints Json     @db.JsonB
+  configuration   Json?    @db.JsonB
+  effectiveFrom   DateTime @default(now()) @db.Timestamptz(6)
+  description     String?  @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  evaluations SuitabilityEvaluation[]
+
+  @@index([effectiveFrom])
+}
+
+model CatalogSnapshot {
+  id           String   @id @default(uuid()) @db.Uuid
+  contentHash  String
+  snapshotData Json     @db.JsonB
+  capturedAt   DateTime @default(now()) @db.Timestamptz(6)
+  recordCount  Int?
+  metadata     Json?    @db.JsonB
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  evaluations SuitabilityEvaluation[]
+
+  @@index([contentHash])
+  @@index([capturedAt])
+}
+
+model SuitabilityEvaluation {
+  id                 String   @id @default(uuid()) @db.Uuid
+  policyId           String   @db.Uuid
+  workloadCategoryId String   @db.Uuid
+  catalogSnapshotId  String   @db.Uuid
+  requestHash        String?
+  input              Json     @db.JsonB
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+
+  policy          SuitabilityPolicy   @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  workload        WorkloadCategory    @relation(fields: [workloadCategoryId], references: [id], onDelete: Restrict)
+  catalogSnapshot CatalogSnapshot     @relation(fields: [catalogSnapshotId], references: [id], onDelete: Restrict)
+  results         SuitabilityResult[]
+
+  @@index([policyId])
+  @@index([workloadCategoryId])
+  @@index([catalogSnapshotId])
+  @@index([createdAt])
+  @@index([requestHash])
+}
+
+model SuitabilityResult {
+  id                    String               @id @default(uuid()) @db.Uuid
+  evaluationId          String               @db.Uuid
+  modelProviderId       String               @db.Uuid
+  policyVersion         String
+  eligibility           CandidateEligibility
+  totalScore            Decimal?             @db.Decimal(8, 5)
+  scoreComponents       Json                 @db.JsonB
+  hardConstraintResults Json                 @db.JsonB
+  unknowns              Json                 @db.JsonB
+  explanation           String               @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  evaluation    SuitabilityEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Restrict)
+  modelProvider ModelProvider         @relation(fields: [modelProviderId], references: [id], onDelete: Restrict)
+
+  @@unique([evaluationId, modelProviderId])
+  @@index([evaluationId])
+  @@index([modelProviderId])
+  @@index([eligibility])
+  @@index([totalScore])
+}
